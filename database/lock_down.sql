@@ -1,6 +1,8 @@
 -- Run this in the Supabase SQL editor ONLY AFTER the app is redeployed with SUPABASE_KEY set to the
 -- project's service_role key (Project Settings > API). The server then bypasses RLS, and this script
 -- closes the tables to anyone holding the public anon key (which used to be committed in app.py).
+-- Safe to run again: it drops every policy on these tables first, including the insert-only day-pass
+-- policy an earlier version of this script created for the (now retired) React front end.
 -- Until the redeploy, the live app still uses the anon key and would stop working.
 do $$
 declare t text; p record;
@@ -14,9 +16,5 @@ begin
     execute format('alter table public.%I enable row level security', t);
   end loop;
 end $$;
--- The public site's day-pass booking form (the React app) inserts into one_day_passes with the anon key.
--- Keep exactly that: anon may INSERT a pass, and may not read, change or delete anything.
-create policy "anon can book a day pass" on public.one_day_passes for insert to anon with check (true);
-
 -- Check afterwards: select tablename, policyname from pg_policies where schemaname = 'public';
 -- (no rows for these tables), and that the app still lists members when logged in as admin.
