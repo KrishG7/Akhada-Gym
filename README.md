@@ -120,6 +120,8 @@ Create a `.env` file:
 ```
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_KEY=your_supabase_api_key
+FLASK_SECRET_KEY=any_long_random_string   # python3 -c "import secrets; print(secrets.token_hex(32))"
+FLASK_DEBUG=1                              # local development only
 FLASK_ENV=development
 FLASK_APP=app.py
 ```
