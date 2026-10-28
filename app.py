@@ -4,15 +4,57 @@ import os
 from datetime import datetime, timedelta
 import random
 import json
-app = Flask(__name__, static_url_path='/static')
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:  # python-dotenv is optional outside local development
+    pass
 
-# --- Configuration (Same as before) ---
-SUPABASE_URL = "https://ilymrsgbgdhzqnxypwcm.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlseW1yc2diZ2RoenFueHlwd2NtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwMzY2NzIsImV4cCI6MjA3ODYxMjY3Mn0.rs6FTM3SLgoz1pce0kc6E3hOefWm5rKHeg2HpWQ8OfE"
+import hmac
+from werkzeug.security import check_password_hash, generate_password_hash
+
+# Credentials come from the environment (see README "Configuration"), never from source.
+# SUPABASE_KEY must be the server-side service_role key once database/lock_down.sql is applied.
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY (see README, Configuration).")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24) 
+app = Flask(__name__, static_url_path='/static')
+
+# A random key per process logs everyone out on restart and breaks sessions across gunicorn
+# workers, so a fixed key is required except when running locally with FLASK_DEBUG=1.
+_secret_key = os.environ.get("FLASK_SECRET_KEY")
+if not _secret_key:
+    if os.environ.get("FLASK_DEBUG") != "1":
+        raise RuntimeError("Set FLASK_SECRET_KEY (or FLASK_DEBUG=1 for local development).")
+    _secret_key = os.urandom(24)
+app.secret_key = _secret_key
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+
+# Plans a person may pick for themselves. "Admin" is deliberately not here: it grants the admin
+# role at login, so it can only exist on rows an operator creates in the database.
+ALLOWED_PLANS = {"Basic", "Premium", "VIP"}
+RESERVED_EMAILS = {"admin@gym.com"}
+
+
+def hash_password(password):
+    return generate_password_hash(password)
+
+
+def is_hashed(stored):
+    return isinstance(stored, str) and stored.startswith(("pbkdf2:", "scrypt:"))
+
+
+def password_matches(stored, supplied):
+    """Hashed rows use werkzeug; rows created before hashing was added are plain text and are
+    compared in constant time (and upgraded to a hash on the next successful login)."""
+    if not stored or supplied is None:
+        return False
+    if is_hashed(stored):
+        return check_password_hash(stored, supplied)
+    return hmac.compare_digest(str(stored), str(supplied))
 
 exercise_database = {
     'push': {
@@ -152,10 +194,6 @@ def currency_filter(value):
 
 @app.template_filter('format_isodate')
 def format_isodate_filter(value, format_str="%b %d, %Y"):
-    """
-    Parses a Supabase ISO timestamp string and formats it.
-    This is much more robust.
-    """
     if not value:
         return "N/A"
     try:
@@ -202,7 +240,12 @@ def login():
 
             user_data = response.data[0]
             
-            if user_data["password"] == password:
+            if password_matches(user_data["password"], password):
+                if not is_hashed(user_data["password"]):
+                    try:  # upgrade a legacy plain-text row; a failure must not block the login
+                        supabase.from_(table_to_query).update({"password": hash_password(password)}).eq("id", user_data["id"]).execute()
+                    except Exception:
+                        app.logger.exception("could not upgrade legacy password hash")
                 final_role = role
                 if role == "member" and (user_data.get("plan") == "Admin" or user_data.get("email") == "admin@gym.com"):
                      final_role = "admin"
@@ -219,7 +262,8 @@ def login():
                 return redirect(url_for("login"))
         
         except Exception as e:
-            flash(f"An error occurred: {e}", "error")
+            app.logger.exception("login failed")
+            flash("Something went wrong. Please try again.", "error")
             return redirect(url_for("login"))
 
     return render_template("login.html")
@@ -236,6 +280,9 @@ def signup():
         if not name or not email or not password or not plan:
             flash("Name, Email, Password, and Plan are required.", "error")
             return redirect(url_for("signup"))
+        if plan not in ALLOWED_PLANS or email.strip().lower() in RESERVED_EMAILS:
+            flash("Invalid plan or email.", "error")
+            return redirect(url_for("signup"))
 
         try:
             joined_date = datetime.now()
@@ -244,7 +291,7 @@ def signup():
             payload = {
                 "name": name,
                 "email": email,
-                "password": password,
+                "password": hash_password(password),
                 "phone": request.form.get("phone"),
                 "gender": request.form.get("gender"),
                 "age": int(request.form.get("age")) if request.form.get("age", '').isdigit() else None,
@@ -268,7 +315,8 @@ def signup():
                 return redirect(url_for("signup"))
 
         except Exception as e:
-            flash(f"An unexpected error occurred: {e}", "error")
+            app.logger.exception("signup failed")
+            flash("Something went wrong. Please try again.", "error")
             return redirect(url_for("signup"))
 
     return render_template("signup.html")
@@ -383,6 +431,9 @@ def admin_add_member():
         if not name or not email or not password or not plan:
             flash("Name, Email, Password, and Plan are required fields.", "error")
             return redirect(url_for("admin_add_member"))
+        if plan not in ALLOWED_PLANS:
+            flash("Invalid plan.", "error")
+            return redirect(url_for("admin_add_member"))
 
         try:
             joined_date = datetime.now()
@@ -391,7 +442,7 @@ def admin_add_member():
             payload = {
                 "name": name,
                 "email": email,
-                "password": password,
+                "password": hash_password(password),
                 "phone": request.form.get("phone"),
                 "gender": request.form.get("gender"),
                 "age": int(request.form.get("age")) if request.form.get("age", '').isdigit() else None,
@@ -570,7 +621,7 @@ def admin_add_trainer():
             payload = {
                 "name": name,
                 "email": email,
-                "password": password, # STILL INSECURE!
+                "password": hash_password(password),
                 "phone": request.form.get("phone"),
                 "specialization": request.form.get("specialization"),
                 "experience": request.form.get("experience"),
@@ -1919,4 +1970,4 @@ def trainer_delete_class(class_id):
 
 # --- Main execution ---
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")
