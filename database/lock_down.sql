@@ -14,5 +14,9 @@ begin
     execute format('alter table public.%I enable row level security', t);
   end loop;
 end $$;
+-- The public site's day-pass booking form (the React app) inserts into one_day_passes with the anon key.
+-- Keep exactly that: anon may INSERT a pass, and may not read, change or delete anything.
+create policy "anon can book a day pass" on public.one_day_passes for insert to anon with check (true);
+
 -- Check afterwards: select tablename, policyname from pg_policies where schemaname = 'public';
 -- (no rows for these tables), and that the app still lists members when logged in as admin.

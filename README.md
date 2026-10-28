@@ -21,3 +21,9 @@ venv/bin/pip install pytest && venv/bin/python -m pytest   # tests use a fake da
   so it can only be set on a row by an operator in the database.
 - The database must not be readable with the public anon key. After redeploying with the `service_role`
   key in `SUPABASE_KEY`, run `database/lock_down.sql` in the Supabase SQL editor.
+
+## The React front end (akhada-gym)
+The separate React app logs people in from the browser by filtering the `members` table on the typed
+password, which only works while the tables are readable with the public key. It cannot work after
+`database/lock_down.sql`. Retire it, or change its login to call this Flask app, before locking down. Its
+public day-pass booking form keeps working because the script leaves an insert-only policy for it.
