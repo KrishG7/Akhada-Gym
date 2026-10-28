@@ -103,7 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
       content += `
         <div class="space-y-4">
             <h3 class="text-lg font-medium text-neutral-900">Confirm Booking</h3>
-            <p class="text-sm text-neutral-600">Your details are verified. Confirm your booking to generate your pass.</p>
+            <p class="text-sm text-neutral-600">Your details are verified. Confirm your booking to generate your pass. You pay at the gym reception; nothing is charged online.</p>
             <div class="p-4 bg-neutral-50 border border-neutral-200 rounded-lg space-y-2 text-neutral-900">
                 <div class="flex justify-between"><span class="text-neutral-500">Name:</span> <span class="font-medium">${data.name}</span></div>
                 <div class="flex justify-between"><span class="text-neutral-500">Phone:</span> <span class="font-medium">${data.phone}</span></div>
@@ -114,7 +114,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 Confirm Booking
             </button>
             <div id="payment-loader" class="hidden text-center">
-                <p class="text-neutral-600">Processing payment...</p>
+                <p class="text-neutral-600">Reserving your pass...</p>
             </div>
         </div>
       `;
@@ -125,7 +125,7 @@ document.addEventListener("DOMContentLoaded", () => {
       content += `
         <div class="space-y-4 text-center text-neutral-900">
             <h3 class="text-xl font-medium text-neutral-900">Booking Confirmed!</h3>
-            <p class="text-sm text-neutral-600">Show this QR code at the reception.</p>
+            <p class="text-sm text-neutral-600">Show this QR code at the reception and pay there.</p>
             
             <!-- This is where the QR code will be rendered -->
             <div id="qr-code-canvas" class="p-4 border-2 border-primary-500 rounded-lg inline-block"></div>

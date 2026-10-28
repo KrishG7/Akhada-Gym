@@ -1725,7 +1725,31 @@ def member_profile():
 
 def generate_otp():
     """Generates a 6-digit OTP string."""
-    return str(random.randint(100000, 999999))
+    import secrets
+    return str(100000 + secrets.randbelow(900000))
+
+
+# --- Public booking endpoint hardening -------------------------------------------------------
+# In-memory, per process: with several gunicorn workers the effective limit is a multiple of these.
+# It stops casual spam; put a proper limiter (or a CAPTCHA) in front for anything stronger.
+import time
+from collections import defaultdict, deque
+
+BOOKING_TYPES = {"one_day_pass", "gym_tour"}
+BOOKING_LIMIT_PER_IP = 10      # bookings per hour from one address
+BOOKING_LIMIT_PER_PHONE = 3    # bookings per hour for one phone number
+_booking_hits = defaultdict(deque)
+
+
+def too_many_bookings(key, limit, window=3600):
+    now = time.time()
+    hits = _booking_hits[key]
+    while hits and now - hits[0] > window:
+        hits.popleft()
+    if len(hits) >= limit:
+        return True
+    hits.append(now)
+    return False
 
 def generate_booking_id():
     """Generates a unique booking ID."""
@@ -1745,7 +1769,7 @@ def api_book_pass():
     from datetime import datetime
     
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         name = data.get("name")
         phone = data.get("phone")
         email = data.get("email")
@@ -1753,6 +1777,14 @@ def api_book_pass():
         
         if not name or not phone or not email or not booking_type:
             return jsonify({"success": False, "error": "Missing required fields."}), 400
+        phone, email, name = str(phone).strip(), str(email).strip(), str(name).strip()
+        if booking_type not in BOOKING_TYPES:
+            return jsonify({"success": False, "error": "Unknown booking type."}), 400
+        if len(name) > 100 or not phone.isdigit() or not 10 <= len(phone) <= 12 or "@" not in email or len(email) > 120:
+            return jsonify({"success": False, "error": "Please check your name, phone number and email."}), 400
+        client_ip = request.remote_addr or "unknown"
+        if too_many_bookings("ip:" + client_ip, BOOKING_LIMIT_PER_IP) or too_many_bookings("phone:" + phone, BOOKING_LIMIT_PER_PHONE):
+            return jsonify({"success": False, "error": "Too many bookings. Please try again later."}), 429
 
         otp = generate_otp()
         booking_id = generate_booking_id()
@@ -1773,7 +1805,7 @@ def api_book_pass():
             "email": email,
             "booking_type": booking_type,
             "otp": otp,
-            "payment_status": "completed", 
+            "payment_status": "pending",  # nothing is charged online; the pass is paid for at the gym
             "amount": amount,
             "booking_date": datetime.now().isoformat(),
             "qr_code": qr_data
@@ -1800,7 +1832,8 @@ def api_book_pass():
 
     except Exception as e:
         # Catch and send a clean error response to the client
-        return jsonify({"success": False, "error": f"Booking API Error: {str(e)}"}), 500
+        app.logger.exception("one-day pass booking failed")
+        return jsonify({"success": False, "error": "We could not complete the booking. Please try again."}), 500
 
 @app.route("/admin/classes")
 def admin_classes():
